@@ -1,0 +1,10 @@
+numpy
+pandas
+requests
+openpyxl
+matplotlib
+seaborn
+geopandas
+fiona
+scikit-learn
+joblib
