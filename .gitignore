@@ -9,6 +9,8 @@ __pycache__/
 # Distribution / packaging
 .Python
 build/
+frontend/node modules
+node modules/
 develop-eggs/
 dist/
 downloads/
@@ -205,3 +207,77 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+# ===============================
+# JavaScript / Node.js (Additive)
+# ===============================
+
+# Node dependencies (extra safety)
+node_modules/
+frontend/node_modules/
+jspm_packages/
+
+# Node / package manager logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ===============================
+# Frontend build outputs (Additive)
+# ===============================
+
+dist/
+build/
+.out/
+.cache/
+.tmp/
+
+# ===============================
+# React / Vite / CRA (Additive)
+# ===============================
+
+.vite/
+vite.config.*.timestamp*
+/build
+
+# Storybook
+.storybook-static/
+
+# ===============================
+# Next.js (Additive)
+# ===============================
+
+.next/
+out/
+.vercel/
+.next-env.d.ts
+
+# ===============================
+# TypeScript (Additive)
+# ===============================
+
+*.tsbuildinfo
+
+# ===============================
+# ESLint / Prettier (Additive)
+# ===============================
+
+.eslintcache
+.prettiercache
+
+# ===============================
+# Frontend Testing (Additive)
+# ===============================
+
+coverage/
+playwright-report/
+test-results/
+.cypress/
+
+# ===============================
+# OS noise (Additive)
+# ===============================
+
+.DS_Store
+Thumbs.db

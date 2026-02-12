@@ -108,6 +108,53 @@ def get_feature_metadata(df: pd.DataFrame, model_features: list[str]) -> list[di
     return meta
 
 
+def _normal_range(series: pd.Series) -> dict[str, float]:
+    clean = pd.to_numeric(series, errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
+    if clean.empty:
+        return {"min": 0.0, "max": 0.0, "median": 0.0}
+    return {
+        "min": float(clean.quantile(0.05)),
+        "max": float(clean.quantile(0.95)),
+        "median": float(clean.median()),
+    }
+
+
+def user_input_guidance(df: pd.DataFrame) -> dict[str, Any]:
+    guidance: dict[str, Any] = {}
+
+    if "price" in df.columns:
+        guidance["monthly_mortgage"] = _normal_range(df["price"])
+    if "rent" in df.columns:
+        guidance["weekly_rent"] = _normal_range(df["rent"])
+    if "IRSD_Score" in df.columns:
+        guidance["seifa_score"] = _normal_range(df["IRSD_Score"])
+    if "Median_age_persons" in df.columns:
+        guidance["median_age_years"] = _normal_range(df["Median_age_persons"])
+    if "Tot_P_P" in df.columns:
+        guidance["population_size"] = _normal_range(df["Tot_P_P"])
+    if "Average_household_size" in df.columns:
+        guidance["household_size"] = _normal_range(df["Average_household_size"])
+    if "Working_Age_Share" in df.columns:
+        r = _normal_range(df["Working_Age_Share"])
+        guidance["working_age_pct"] = {"min": r["min"] * 100, "max": r["max"] * 100, "median": r["median"] * 100}
+    if "Senior_Share" in df.columns:
+        r = _normal_range(df["Senior_Share"])
+        guidance["senior_pct"] = {"min": r["min"] * 100, "max": r["max"] * 100, "median": r["median"] * 100}
+    if "Diversity_Share" in df.columns:
+        r = _normal_range(df["Diversity_Share"])
+        guidance["diversity_pct"] = {"min": r["min"] * 100, "max": r["max"] * 100, "median": r["median"] * 100}
+
+    if "Median_tot_hhd_inc_weekly" in df.columns and "price" in df.columns:
+        monthly_income = pd.to_numeric(df["Median_tot_hhd_inc_weekly"], errors="coerce") * 52 / 12
+        burden = (pd.to_numeric(df["price"], errors="coerce") / monthly_income) * 100
+        r = _normal_range(burden)
+        guidance["mortgage_burden_pct"] = r
+    else:
+        guidance["mortgage_burden_pct"] = {"min": 20.0, "max": 45.0, "median": 30.0}
+
+    return guidance
+
+
 def _build_base_feature_vector(
     df: pd.DataFrame,
     model_features: list[str],
@@ -337,6 +384,29 @@ def opportunities_from_rows(rows: list[dict[str, Any]], top_n: int = 20) -> dict
     ]
     opp_rows = top[cols].fillna(0).to_dict(orient="records")
     return {"summary": summary, "opportunities": opp_rows}
+
+
+def suburbs_closest_to_roi(
+    rows: list[dict[str, Any]],
+    target_roi: float,
+    top_n: int = 5,
+) -> list[dict[str, Any]]:
+    if not rows:
+        return []
+
+    clean_rows: list[dict[str, Any]] = []
+    for row in rows:
+        roi_value = pd.to_numeric(row.get("roi", 0), errors="coerce")
+        if pd.isna(roi_value):
+            continue
+        candidate = dict(row)
+        candidate["roi"] = float(roi_value)
+        candidate["roi_diff"] = abs(float(roi_value) - float(target_roi))
+        clean_rows.append(candidate)
+
+    clean_rows.sort(key=lambda x: (x["roi_diff"], -x["roi"]))
+    top_n = max(1, min(top_n, 20))
+    return clean_rows[:top_n]
 
 
 def suburb_names(df: pd.DataFrame, q: str | None, limit: int = 200) -> list[str]:

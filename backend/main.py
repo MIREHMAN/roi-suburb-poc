@@ -23,7 +23,9 @@ from data_loader import (
     load_model_artifact,
     opportunities_from_rows,
     predict_from_inputs,
+    suburbs_closest_to_roi,
     suburb_names,
+    user_input_guidance,
 )
 
 app = FastAPI(title="ROI Suburb Finder API")
@@ -67,6 +69,11 @@ async def features():
     if MODEL_ARTIFACT is None:
         return {"features": [], "message": "Model not loaded."}
     return {"features": get_feature_metadata(DATA_DF, MODEL_FEATURES)}
+
+
+@app.get("/api/input-guidance")
+async def input_guidance():
+    return {"guidance": user_input_guidance(DATA_DF)}
 
 
 @app.get("/api/model-info")
@@ -113,6 +120,16 @@ async def get_suburbs(
 @app.get("/api/opportunities")
 async def opportunities(top_n: int = 20):
     return investment_opportunities(DATA_DF, top_n=top_n)
+
+
+@app.get("/api/suburbs-near-roi")
+@app.get("/api/suburbs-near-roi/")
+@app.get("/api/suburbs_near_roi")
+async def suburbs_near_roi(roi: float, top_n: int = 5):
+    return {
+        "target_roi": roi,
+        "suburbs": suburbs_closest_to_roi(SUBURBS_DATA, target_roi=roi, top_n=top_n),
+    }
 
 
 def _format_filters(

@@ -1,432 +1,342 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 
 const API_BASE = 'http://localhost:8000'
 
-function pct(value) {
+function roiPercent(value) {
     return `${((value || 0) * 100).toFixed(2)}%`
 }
 
 function App() {
-    const [suburbs, setSuburbs] = useState([])
-    const [suburbsLoading, setSuburbsLoading] = useState(false)
-
-    const [search, setSearch] = useState('')
-    const [minRoi, setMinRoi] = useState('')
-    const [maxPrice, setMaxPrice] = useState('')
-    const [minSeifa, setMinSeifa] = useState('')
-    const [topN, setTopN] = useState(30)
-
-    const [featureMeta, setFeatureMeta] = useState([])
     const [suburbNames, setSuburbNames] = useState([])
     const [selectedSuburb, setSelectedSuburb] = useState('')
-    const [featureToAdd, setFeatureToAdd] = useState('')
-    const [activeFeatures, setActiveFeatures] = useState([])
-    const [featureValues, setFeatureValues] = useState({})
+    const [modelDefaults, setModelDefaults] = useState({})
+    const [guidance, setGuidance] = useState({})
+    const [userInputs, setUserInputs] = useState({
+        monthlyMortgage: '',
+        mortgageBurdenPct: '',
+        weeklyRent: '',
+        seifaScore: '',
+        population: '',
+        workingAgePct: '',
+        seniorPct: '',
+        diversityPct: '',
+        medianAge: '',
+        householdSize: '',
+    })
 
     const [prediction, setPrediction] = useState(null)
-    const [predictionLoading, setPredictionLoading] = useState(false)
-
     const [opportunities, setOpportunities] = useState([])
-    const [summary, setSummary] = useState(null)
-    const [health, setHealth] = useState(null)
-    const [modelInfo, setModelInfo] = useState(null)
+    const [loading, setLoading] = useState(false)
+    const [error, setError] = useState('')
 
-    const [banner, setBanner] = useState({ type: '', message: '' })
+    useEffect(() => {
+        const load = async () => {
+            try {
+                const [featureRes, suburbRes, guidanceRes] = await Promise.all([
+                    fetch(`${API_BASE}/api/features`),
+                    fetch(`${API_BASE}/api/suburb-names?limit=500`),
+                    fetch(`${API_BASE}/api/input-guidance`),
+                ])
 
-    const featureMetaMap = useMemo(() => {
-        const map = {}
-        featureMeta.forEach((f) => {
-            map[f.feature] = f
-        })
-        return map
-    }, [featureMeta])
+                const featureData = await featureRes.json()
+                const suburbData = await suburbRes.json()
+                const guidanceData = await guidanceRes.json()
 
-    const showBanner = (type, message) => {
-        setBanner({ type, message })
-        window.clearTimeout(window._bannerTimer)
-        window._bannerTimer = window.setTimeout(() => {
-            setBanner({ type: '', message: '' })
-        }, 3000)
-    }
+                const features = featureData.features || []
+                const defaults = {}
+                features.forEach((f) => {
+                    defaults[f.feature] = f.median
+                })
 
-    const buildFilterParams = () => {
-        const params = new URLSearchParams()
-        if (search) params.append('name', search)
-        if (minRoi) params.append('min_roi', minRoi)
-        if (maxPrice) params.append('max_price', maxPrice)
-        if (minSeifa) params.append('min_seifa', minSeifa)
-        params.append('top_n', topN)
-        return params
-    }
+                const g = guidanceData.guidance || {}
 
-    const fetchSuburbs = async () => {
-        setSuburbsLoading(true)
-        try {
-            const params = buildFilterParams()
-            const response = await fetch(`${API_BASE}/api/suburbs?${params.toString()}`)
-            if (!response.ok) throw new Error(`suburbs failed: ${response.status}`)
-            const data = await response.json()
-            setSuburbs(data)
-        } catch (error) {
-            console.error('Failed to load suburbs', error)
-            showBanner('error', 'Failed to load suburbs from API.')
-        } finally {
-            setSuburbsLoading(false)
+                setModelDefaults(defaults)
+                setSuburbNames(suburbData.names || [])
+                setGuidance(g)
+                setUserInputs({
+                    monthlyMortgage: String(g.monthly_mortgage?.median ?? ''),
+                    mortgageBurdenPct: String(g.mortgage_burden_pct?.median ?? 30),
+                    weeklyRent: String(g.weekly_rent?.median ?? ''),
+                    seifaScore: String(g.seifa_score?.median ?? defaults.IRSD_Score ?? ''),
+                    population: String(g.population_size?.median ?? defaults.Tot_P_P ?? ''),
+                    workingAgePct: String(g.working_age_pct?.median ?? Number(defaults.Working_Age_Share || 0) * 100),
+                    seniorPct: String(g.senior_pct?.median ?? Number(defaults.Senior_Share || 0) * 100),
+                    diversityPct: String(g.diversity_pct?.median ?? Number(defaults.Diversity_Share || 0) * 100),
+                    medianAge: String(g.median_age_years?.median ?? defaults.Median_age_persons ?? ''),
+                    householdSize: String(g.household_size?.median ?? defaults.Average_household_size ?? ''),
+                })
+            } catch (loadError) {
+                console.error(loadError)
+                setError('Failed to load form options from the API.')
+            }
         }
+
+        load()
+    }, [])
+
+    const toNumber = (value, fallback = 0) => {
+        const parsed = Number(value)
+        return Number.isFinite(parsed) ? parsed : fallback
     }
 
-    const downloadReport = async (format) => {
-        try {
-            const params = buildFilterParams()
-            const response = await fetch(`${API_BASE}/api/report/${format}?${params.toString()}`)
-            if (!response.ok) throw new Error(`download failed: ${response.status}`)
-
-            const blob = await response.blob()
-            const url = window.URL.createObjectURL(blob)
-            const disposition = response.headers.get('content-disposition') || ''
-            const match = disposition.match(/filename=([^;]+)/)
-            const fallback = `suburb_recommendation_report.${format}`
-            const filename = match ? match[1].replace(/"/g, '') : fallback
-
-            const a = document.createElement('a')
-            a.href = url
-            a.download = filename
-            document.body.appendChild(a)
-            a.click()
-            a.remove()
-            window.URL.revokeObjectURL(url)
-            showBanner('success', `${format.toUpperCase()} report downloaded.`)
-        } catch (error) {
-            console.error('Report download failed', error)
-            showBanner('error', 'Report download failed.')
-        }
+    const clampShare = (valuePct) => {
+        const share = toNumber(valuePct, 0) / 100
+        return Math.max(0, Math.min(1, share))
     }
 
-    const fetchFeatureMetadata = async () => {
-        const response = await fetch(`${API_BASE}/api/features`)
-        const data = await response.json()
-        const features = data.features || []
-        setFeatureMeta(features)
-
-        if (features.length > 0 && activeFeatures.length === 0) {
-            const defaultFeatures = features.slice(0, 6).map((f) => f.feature)
-            setActiveFeatures(defaultFeatures)
-            setFeatureToAdd(features[0].feature)
-
-            const defaults = {}
-            features.forEach((f) => {
-                defaults[f.feature] = f.median
-            })
-            setFeatureValues(defaults)
-        }
+    const rangeLabel = (key, decimals = 0, suffix = '') => {
+        const item = guidance[key]
+        if (!item) return 'N/A'
+        const low = Number(item.min).toFixed(decimals)
+        const high = Number(item.max).toFixed(decimals)
+        return `${low} - ${high}${suffix}`
     }
 
-    const fetchSuburbNames = async () => {
-        const response = await fetch(`${API_BASE}/api/suburb-names?limit=1000`)
-        const data = await response.json()
-        setSuburbNames(data.names || [])
+    const buildEngineeredFeatures = () => {
+        const engineered = { ...modelDefaults }
+
+        const seifa = toNumber(userInputs.seifaScore, engineered.IRSD_Score || 1000)
+        const monthlyMortgage = Math.max(1, toNumber(userInputs.monthlyMortgage, guidance.monthly_mortgage?.median || 1))
+        const burdenPct = Math.max(5, Math.min(80, toNumber(userInputs.mortgageBurdenPct, 30)))
+        const burdenShare = burdenPct / 100
+        const householdIncomeWeekly = (monthlyMortgage / burdenShare) * 12 / 52
+        const weeklyRent = Math.max(0, toNumber(userInputs.weeklyRent, guidance.weekly_rent?.median || 0))
+
+        engineered.IRSD_Score = seifa
+        engineered.IRSAD_Score = seifa
+        engineered.IER_Score = seifa
+        engineered.IEO_Score = seifa
+        engineered.Median_age_persons = toNumber(userInputs.medianAge, engineered.Median_age_persons || 0)
+        engineered.Median_tot_hhd_inc_weekly = householdIncomeWeekly
+        engineered.Median_tot_prsnl_inc_weekly = householdIncomeWeekly * 0.56
+        engineered.Average_household_size = Math.max(0.5, toNumber(userInputs.householdSize, engineered.Average_household_size || 1))
+        engineered.Tot_P_P = Math.max(1, toNumber(userInputs.population, engineered.Tot_P_P || 1))
+        engineered.Working_Age_Share = clampShare(userInputs.workingAgePct)
+        engineered.Senior_Share = clampShare(userInputs.seniorPct)
+        engineered.Diversity_Share = clampShare(userInputs.diversityPct)
+        engineered.Rent_to_Income_Ratio = Math.min(1.5, weeklyRent / Math.max(1, householdIncomeWeekly))
+
+        return engineered
     }
 
-    const fetchOpportunities = async () => {
-        const response = await fetch(`${API_BASE}/api/opportunities?top_n=20`)
-        const data = await response.json()
-        setSummary(data.summary || null)
-        setOpportunities(data.opportunities || [])
-    }
+    const handleSubmit = async (event) => {
+        event.preventDefault()
+        setLoading(true)
+        setError('')
 
-    const fetchStatus = async () => {
-        const [hRes, mRes] = await Promise.all([
-            fetch(`${API_BASE}/api/health`),
-            fetch(`${API_BASE}/api/model-info`),
-        ])
-        setHealth(await hRes.json())
-        setModelInfo(await mRes.json())
-    }
-
-    const runPrediction = async (overrideFeatures = null) => {
-        setPredictionLoading(true)
         try {
             const payload = {
                 suburb_name: selectedSuburb || null,
-                feature_values:
-                    overrideFeatures ||
-                    activeFeatures.reduce((acc, feature) => {
-                        const raw = featureValues[feature]
-                        if (raw !== undefined && raw !== '') acc[feature] = Number(raw)
-                        return acc
-                    }, {}),
+                feature_values: buildEngineeredFeatures(),
             }
 
-            const response = await fetch(`${API_BASE}/api/predict`, {
+            const predictRes = await fetch(`${API_BASE}/api/predict`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
             })
-            const data = await response.json()
-            if (data.error) throw new Error(data.error)
-            setPrediction(data)
 
-            if (data.input_features) {
-                setFeatureValues((prev) => ({ ...prev, ...data.input_features }))
+            const predictData = await predictRes.json()
+            if (predictData.error) {
+                throw new Error(predictData.error)
             }
-            showBanner('success', 'Prediction completed.')
-        } catch (error) {
-            console.error('Prediction failed', error)
-            showBanner('error', 'Prediction failed. Check backend/model status.')
+
+            const nearRes = await fetch(
+                `${API_BASE}/api/suburbs-near-roi?roi=${encodeURIComponent(predictData.predicted_roi_score)}&top_n=5`,
+            )
+            const nearData = await nearRes.json()
+
+            setPrediction(predictData)
+            setOpportunities(nearData.suburbs || [])
+        } catch (submitError) {
+            console.error(submitError)
+            setError('Prediction failed. Make sure backend and model are running.')
+            setPrediction(null)
+            setOpportunities([])
         } finally {
-            setPredictionLoading(false)
+            setLoading(false)
         }
     }
-
-    const useSuburbDefaults = async () => {
-        await runPrediction({})
-    }
-
-    const applyScenarioPreset = (preset) => {
-        const next = { ...featureValues }
-        const setIf = (k, v) => {
-            if (featureMetaMap[k]) next[k] = v
-        }
-
-        if (preset === 'balanced') {
-            setIf('Rent_to_Income_Ratio', 0.22)
-            setIf('Working_Age_Share', 0.38)
-            setIf('IRSD_Score', 1050)
-            setIf('Median_tot_hhd_inc_weekly', 2500)
-        }
-        if (preset === 'growth') {
-            setIf('Working_Age_Share', 0.45)
-            setIf('Diversity_Share', 0.4)
-            setIf('IRSAD_Score', 1120)
-            setIf('Median_tot_hhd_inc_weekly', 3200)
-        }
-        if (preset === 'defensive') {
-            setIf('Senior_Share', 0.24)
-            setIf('IRSD_Score', 1100)
-            setIf('Rent_to_Income_Ratio', 0.19)
-            setIf('Average_household_size', 2.8)
-        }
-        setFeatureValues(next)
-    }
-
-    const addFeature = () => {
-        if (!featureToAdd || activeFeatures.includes(featureToAdd)) return
-        setActiveFeatures((prev) => [...prev, featureToAdd])
-    }
-
-    const removeFeature = (feature) => {
-        setActiveFeatures((prev) => prev.filter((f) => f !== feature))
-    }
-
-    useEffect(() => {
-        fetchSuburbs()
-        fetchFeatureMetadata()
-        fetchSuburbNames()
-        fetchOpportunities()
-        fetchStatus()
-    }, [])
 
     return (
-        <div className="app-shell">
-            <header className="hero">
-                <h1>Suburb ROI Intelligence Dashboard</h1>
-                <p>Test scenarios, compare opportunities, and export reports from the active filter state.</p>
-                <div className="status-grid">
-                    <div>
-                        <span>API Status</span>
-                        <strong>{health?.status || '...'}</strong>
-                    </div>
-                    <div>
-                        <span>Suburbs Loaded</span>
-                        <strong>{health?.suburbs_loaded ?? '...'}</strong>
-                    </div>
-                    <div>
-                        <span>Model Target</span>
-                        <strong>{modelInfo?.target || '...'}</strong>
-                    </div>
-                    <div>
-                        <span>Model R2</span>
-                        <strong>{modelInfo?.metrics?.r2 !== undefined ? modelInfo.metrics.r2.toFixed(3) : '...'}</strong>
-                    </div>
-                </div>
-            </header>
+        <main className="app">
+            <section className="card">
+                <h1>ROI Suburb Predictor</h1>
+                <p>Enter investment-focused assumptions. The app engineers model features in the background.</p>
 
-            {banner.message ? <div className={`banner ${banner.type}`}>{banner.message}</div> : null}
-
-            <section className="panel">
-                <div className="panel-head">
-                    <h2>Opportunity Explorer</h2>
-                    <button onClick={() => { fetchSuburbs(); fetchOpportunities() }}>Refresh Insights</button>
-                </div>
-                <div className="controls-grid">
-                    <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Suburb name" />
-                    <input value={minRoi} onChange={(e) => setMinRoi(e.target.value)} type="number" placeholder="Min ROI %" />
-                    <input value={maxPrice} onChange={(e) => setMaxPrice(e.target.value)} type="number" placeholder="Max monthly mortgage" />
-                    <input value={minSeifa} onChange={(e) => setMinSeifa(e.target.value)} type="number" placeholder="Min SEIFA" />
-                    <input value={topN} onChange={(e) => setTopN(Number(e.target.value || 30))} type="number" min="5" max="200" placeholder="Top N" />
-                    <button onClick={fetchSuburbs}>{suburbsLoading ? 'Loading...' : 'Apply Filters'}</button>
-                </div>
-                <div className="report-actions">
-                    <button className="report-btn" onClick={() => downloadReport('csv')}>Download Report (CSV)</button>
-                    <button className="report-btn alt" onClick={() => downloadReport('pdf')}>Download Report (PDF)</button>
-                </div>
-
-                <div className="table-wrap">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Suburb</th>
-                                <th>Predicted ROI</th>
-                                <th>Mortgage</th>
-                                <th>Weekly Rent</th>
-                                <th>SEIFA</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {suburbs.map((s) => (
-                                <tr key={`${s.name}-${s.price}`}>
-                                    <td>{s.name}</td>
-                                    <td className="good">{pct(s.roi)}</td>
-                                    <td>${Number(s.price || 0).toLocaleString()}</td>
-                                    <td>${Number(s.rent || 0).toLocaleString()}</td>
-                                    <td>{Number(s.seifa_score || 0).toFixed(0)}</td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                    {!suburbsLoading && suburbs.length === 0 ? <p className="muted">No suburbs found for current filters.</p> : null}
-                </div>
-            </section>
-
-            <section className="panel two-col">
-                <div>
-                    <h2>Prediction Sandbox</h2>
-                    <div className="field-group">
-                        <label>Select suburb baseline</label>
+                <form className="form" onSubmit={handleSubmit}>
+                    <label>
+                        Suburb (optional baseline)
                         <input
                             list="suburb-options"
                             value={selectedSuburb}
                             onChange={(e) => setSelectedSuburb(e.target.value)}
-                            placeholder="Type suburb name"
+                            placeholder="Type a suburb name"
                         />
-                        <datalist id="suburb-options">
-                            {suburbNames.map((name) => (
-                                <option key={name} value={name} />
-                            ))}
-                        </datalist>
-                        <button onClick={useSuburbDefaults} disabled={!selectedSuburb || predictionLoading}>Use Suburb Defaults</button>
+                    </label>
+
+                    <datalist id="suburb-options">
+                        {suburbNames.map((name) => (
+                            <option key={name} value={name} />
+                        ))}
+                    </datalist>
+
+                    <div className="feature-grid">
+                        <label>
+                            Monthly mortgage repayment (AUD)
+                            <input
+                                type="number"
+                                value={userInputs.monthlyMortgage}
+                                onChange={(e) => setUserInputs((prev) => ({ ...prev, monthlyMortgage: e.target.value }))}
+                            />
+                            <small className="hint">Normal range: {rangeLabel('monthly_mortgage')}</small>
+                        </label>
+
+                        <label>
+                            Mortgage burden target (% of household income)
+                            <input
+                                type="number"
+                                step="0.1"
+                                min="5"
+                                max="80"
+                                value={userInputs.mortgageBurdenPct}
+                                onChange={(e) => setUserInputs((prev) => ({ ...prev, mortgageBurdenPct: e.target.value }))}
+                            />
+                            <small className="hint">Normal range: {rangeLabel('mortgage_burden_pct', 1, '%')}</small>
+                        </label>
+
+                        <label>
+                            Weekly rent expectation (AUD)
+                            <input
+                                type="number"
+                                value={userInputs.weeklyRent}
+                                onChange={(e) => setUserInputs((prev) => ({ ...prev, weeklyRent: e.target.value }))}
+                            />
+                            <small className="hint">Normal range: {rangeLabel('weekly_rent')}</small>
+                        </label>
+
+                        <label>
+                            SEIFA score (socio-economic resilience)
+                            <input
+                                type="number"
+                                value={userInputs.seifaScore}
+                                onChange={(e) => setUserInputs((prev) => ({ ...prev, seifaScore: e.target.value }))}
+                            />
+                            <small className="hint">Normal range: {rangeLabel('seifa_score')}</small>
+                        </label>
+
+                        <label>
+                            Population size
+                            <input
+                                type="number"
+                                value={userInputs.population}
+                                onChange={(e) => setUserInputs((prev) => ({ ...prev, population: e.target.value }))}
+                            />
+                            <small className="hint">Normal range: {rangeLabel('population_size')}</small>
+                        </label>
+
+                        <label>
+                            Median age (years)
+                            <input
+                                type="number"
+                                value={userInputs.medianAge}
+                                onChange={(e) => setUserInputs((prev) => ({ ...prev, medianAge: e.target.value }))}
+                            />
+                            <small className="hint">Normal range: {rangeLabel('median_age_years')}</small>
+                        </label>
+
+                        <label>
+                            Average household size
+                            <input
+                                type="number"
+                                step="0.1"
+                                value={userInputs.householdSize}
+                                onChange={(e) => setUserInputs((prev) => ({ ...prev, householdSize: e.target.value }))}
+                            />
+                            <small className="hint">Normal range: {rangeLabel('household_size', 1)}</small>
+                        </label>
+
+                        <label>
+                            Working-age residents (%)
+                            <input
+                                type="number"
+                                step="0.1"
+                                min="0"
+                                max="100"
+                                value={userInputs.workingAgePct}
+                                onChange={(e) => setUserInputs((prev) => ({ ...prev, workingAgePct: e.target.value }))}
+                            />
+                            <small className="hint">Normal range: {rangeLabel('working_age_pct', 1, '%')}</small>
+                        </label>
+
+                        <label>
+                            Senior residents (%)
+                            <input
+                                type="number"
+                                step="0.1"
+                                min="0"
+                                max="100"
+                                value={userInputs.seniorPct}
+                                onChange={(e) => setUserInputs((prev) => ({ ...prev, seniorPct: e.target.value }))}
+                            />
+                            <small className="hint">Normal range: {rangeLabel('senior_pct', 1, '%')}</small>
+                        </label>
+
+                        <label>
+                            Residents from diverse backgrounds (%)
+                            <input
+                                type="number"
+                                step="0.1"
+                                min="0"
+                                max="100"
+                                value={userInputs.diversityPct}
+                                onChange={(e) => setUserInputs((prev) => ({ ...prev, diversityPct: e.target.value }))}
+                            />
+                            <small className="hint">Normal range: {rangeLabel('diversity_pct', 1, '%')}</small>
+                        </label>
                     </div>
 
-                    <div className="preset-row">
-                        <button onClick={() => applyScenarioPreset('balanced')}>Balanced Preset</button>
-                        <button onClick={() => applyScenarioPreset('growth')}>Growth Preset</button>
-                        <button onClick={() => applyScenarioPreset('defensive')}>Defensive Preset</button>
-                    </div>
-
-                    <div className="field-group">
-                        <label>Add feature to scenario</label>
-                        <div className="inline-row">
-                            <select value={featureToAdd} onChange={(e) => setFeatureToAdd(e.target.value)}>
-                                {featureMeta.map((f) => (
-                                    <option key={f.feature} value={f.feature}>{f.feature}</option>
-                                ))}
-                            </select>
-                            <button onClick={addFeature}>Add Feature</button>
-                        </div>
-                    </div>
-
-                    <div className="feature-list">
-                        {activeFeatures.map((feature) => {
-                            const meta = featureMetaMap[feature] || {}
-                            return (
-                                <div className="feature-card" key={feature}>
-                                    <div className="feature-head">
-                                        <strong>{feature}</strong>
-                                        <button className="ghost" onClick={() => removeFeature(feature)}>Remove</button>
-                                    </div>
-                                    <input
-                                        type="number"
-                                        value={featureValues[feature] ?? ''}
-                                        onChange={(e) => setFeatureValues((prev) => ({ ...prev, [feature]: e.target.value }))}
-                                    />
-                                    <small>
-                                        Range: {meta.min ?? '-'} to {meta.max ?? '-'} | Median: {meta.median ?? '-'}
-                                    </small>
-                                </div>
-                            )
-                        })}
-                    </div>
-
-                    <button className="cta" onClick={() => runPrediction()} disabled={predictionLoading}>
-                        {predictionLoading ? 'Predicting...' : 'Run ROI Prediction'}
+                    <button className="submit" type="submit" disabled={loading || Object.keys(modelDefaults).length === 0}>
+                        {loading ? 'Running prediction...' : 'Run Prediction'}
                     </button>
-                </div>
+                </form>
 
-                <div>
-                    <h2>Prediction Insights</h2>
-                    {prediction ? (
-                        <div className="insight-card">
-                            <div className="metric-grid">
-                                <div>
-                                    <span>Predicted ROI</span>
-                                    <strong>{prediction.predicted_roi_percent}%</strong>
-                                </div>
-                                <div>
-                                    <span>Percentile</span>
-                                    <strong>{prediction.percentile_vs_all_suburbs}%</strong>
-                                </div>
-                                <div>
-                                    <span>Signal</span>
-                                    <strong>{prediction.investment_signal}</strong>
-                                </div>
-                            </div>
-
-                            <h3>Top Drivers</h3>
-                            <ul className="drivers">
-                                {(prediction.top_factors || []).map((factor) => (
-                                    <li key={factor.feature}>
-                                        <span>{factor.feature}</span>
-                                        <span className={factor.effect === 'positive' ? 'good' : 'warn'}>
-                                            {factor.effect}
-                                        </span>
-                                    </li>
-                                ))}
-                            </ul>
-                        </div>
-                    ) : (
-                        <p className="muted">No prediction yet. Select suburb/features and run simulation.</p>
-                    )}
-                </div>
+                {error ? <p className="error">{error}</p> : null}
             </section>
 
-            <section className="panel">
-                <h2>Investment Opportunity Insights</h2>
-                {summary && (
-                    <div className="summary-grid">
-                        <div><span>Suburbs Analyzed</span><strong>{summary.suburbs_analyzed}</strong></div>
-                        <div><span>Top-20 Avg ROI</span><strong>{summary.avg_roi_percent_top_n}%</strong></div>
-                        <div><span>Median ROI (All)</span><strong>{summary.median_roi_percent_all}%</strong></div>
-                        <div><span>Max ROI</span><strong>{summary.max_roi_percent}%</strong></div>
+            {prediction ? (
+                <section className="card results">
+                    <h2>Prediction Result</h2>
+                    <div className="prediction-metrics">
+                        <p>
+                            <span>Predicted ROI</span>
+                            <strong>{prediction.predicted_roi_percent}%</strong>
+                        </p>
+                        <p>
+                            <span>Percentile</span>
+                            <strong>{prediction.percentile_vs_all_suburbs}%</strong>
+                        </p>
+                        <p>
+                            <span>Signal</span>
+                            <strong>{prediction.investment_signal}</strong>
+                        </p>
                     </div>
-                )}
 
-                <div className="opportunity-grid">
-                    {opportunities.slice(0, 12).map((o) => (
-                        <article key={o.name} className="op-card">
-                            <h3>{o.name}</h3>
-                            <p>ROI: <strong>{pct(o.roi)}</strong></p>
-                            <p>Mortgage: ${Number(o.price || 0).toLocaleString()}</p>
-                            <p>Rent: ${Number(o.rent || 0).toLocaleString()}</p>
-                            <div className="tag-row">
-                                {(o.insight_tags || []).map((tag) => (
-                                    <span key={tag} className="tag">{tag}</span>
-                                ))}
-                            </div>
-                        </article>
-                    ))}
-                </div>
-            </section>
-        </div>
+                    <h3>5 Suburbs With ROI Closest To Your Prediction</h3>
+                    <div className="opportunity-grid">
+                        {opportunities.map((opportunity) => (
+                            <article className="opportunity-card" key={opportunity.name}>
+                                <h4>{opportunity.name}</h4>
+                                <p>ROI: {roiPercent(opportunity.roi)}</p>
+                                <p>Gap vs prediction: {roiPercent(opportunity.roi_diff)}</p>
+                                <p>Mortgage: ${Number(opportunity.price || 0).toLocaleString()}</p>
+                                <p>Rent: ${Number(opportunity.rent || 0).toLocaleString()}</p>
+                            </article>
+                        ))}
+                    </div>
+                </section>
+            ) : null}
+        </main>
     )
 }
 
